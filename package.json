@@ -1,0 +1,13 @@
+{
+    "devDependencies": {
+        "@types/jest": "^29.5.11",
+        "jest": "^29.7.0"
+    },
+    "scripts": {
+        "test": "jest",
+        "start": "node ./UnitTest/index.js"
+    },
+    "dependencies": {
+        "node-localstorage": "^3.0.5"
+    }
+}
