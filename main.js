@@ -51,7 +51,7 @@ var recorderEvents = {
 // 录播姬脚本正文开头 ------
 recorderEvents.onTest = () => {
     // 模拟正常请求中需要保存暂存数据的情况
-    // const item = new storage(storageName);
+    // const item = new Storage(storageName);
     // item.set_roomData(3, JSON.stringify({
     //     "storageName": storageName,
     //     "roomid": 3,
@@ -70,7 +70,7 @@ recorderEvents.onTest = () => {
     //     "flv": "http://127.0.0.1/_1500",
     //     "hls": "http://127.0.0.1"
     // })))
-    // console.log(JSON.stringify(new storage(storageName).get_roomData(`name=${storageName}&roomid=3`)));
+    // console.log(JSON.stringify(new Storage(storageName).get_roomData(`name=${storageName}&roomid=3`)));
     
     const getOldUrl = oldUrl(8664667, 10000, {
         "flv": 'http://127.0.0.1/flv1',
@@ -159,7 +159,7 @@ const oldUrl = (roomid, qn, streamUrl) => {
 
     /** 暂存的房间数据 */
     let roomData = null;
-    const oldUrl_storage = class extends storage {
+    const oldUrl_storage = class extends Storage {
         constructor(storage_name = storageName) {
             super(storage_name);
         }
@@ -445,7 +445,7 @@ const qnConvert = qn => {
  * @description 暂存数据
  * @returns {object}
  */
-const storage = class {
+const Storage = class {
     ok = true;
     storage = null;
 
