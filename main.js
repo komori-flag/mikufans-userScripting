@@ -71,8 +71,8 @@ recorderEvents.onTest = () => {
     //     "hls": "http://127.0.0.1"
     // })))
     // console.log(JSON.stringify(new Storage(storageName).get_roomData(`name=${storageName}&roomid=3`)));
-    
-    const getOldUrl = oldUrl(8664667, 10000, {
+
+    const getOldUrl = new OldUrl(8664667, 10000, {
         "flv": 'http://127.0.0.1/flv1',
         "hls": 'http://127.0.0.1/hls1'
     });
@@ -96,194 +96,6 @@ const storageName = "FF0";
 //     }
 // });
 
-/**
- * @function
- * @description 旧直播流地址复用
- * @param {number} roomid 房间 ID 值
- * @param {number} qn 画质 qn 值
- * @param {object} streamUrl 请求的直播流地址
- * @param {string} streamUrl.flv FLV 流地址
- * @param {string} streamUrl.hls HLS_FMP4 流地址
- * @returns {object} ok: 运行状态；message: 信息；oldStream: 此房间相对应的旧直播流地址数据
- */
-const oldUrl = (roomid, qn, streamUrl) => {
-    // 对是否开启“旧直播流地址复用”功能进行检测
-    if (!switch_oldUrl) return {
-        "ok": false,
-        "message": "[旧直播流地址复用]您并未开启“旧直播流地址复用”功能",
-        "oldUrl": null
-    }
-
-    // 正常获取到暂存数据中的房间数据后，就可以对获取的直播流地址进行鉴别了
-    // 对 qn 值为非原画（10000）
-    if (qn !== 10000) {
-        switch_DEBUG ? console.warn("[旧直播流地址复用]当前房间请求的画质为非原画（qn 不等于 10000），故不对此次请求的直播流地址进行复用操作和保存") : null;
-        return {
-            "ok": false,
-            "message": "[旧直播流地址复用]当前房间请求的画质为非原画（qn 不等于 10000），故不对此次请求的直播流地址进行复用操作和保存",
-            "oldUrl": null
-        }
-    }
-
-    /**
-     * @description 直播流地址状态
-     * @param {boolean} status_streamUrl.blurayUrl 是否为二压原画[地址带有“_bluray”字样]
-     * @param {boolean} status_streamUrl.not_10000 是否为未登录“原画”画质[qn为10000但获取的是150等]
-     */
-    const status_streamUrl = {
-        "blurayUrl": false,
-        "not_10000": false
-    }
-
-    // 对直播流地址为 hevc 地址
-    if (/_minihevc/.test(streamUrl?.flv) || /_minihevc/.test(streamUrl?.hls)) {
-        switch_DEBUG ? console.warn("[旧直播流地址复用]当前获取到的为 HEVC 地址，故不对此次请求的直播流地址进行复用操作和保存") : null;
-        return {
-            "ok": false,
-            "message": "[旧直播流地址复用]当前获取到的为 HEVC 地址，故不对此次请求的直播流地址进行复用操作和保存",
-            "oldUrl": null
-        }
-    }
-
-    // 对直播流地址带“_bluray”的二压画质
-    if (/_bluray/.test(streamUrl?.flv) || /_bluray/.test(streamUrl?.hls)) {
-        status_streamUrl.blurayUrl = true;
-        switch_DEBUG ? console.warn("[旧直播流地址复用]当前获取到的直播流地址为二压原画[地址带有“_bluray”字样]") : null;
-    }
-
-    // 对未登录“原画”画质
-    if (/_(800|1500|2500|4000)/.test(streamUrl?.flv) || /_(800|1500|2500|4000)/.test(streamUrl.hls)) {
-        status_streamUrl.not_10000 = true;
-        switch_DEBUG ? console.warn(`[旧直播流地址复用]当前获取到的直播流地址画质不是请求中的 ${qn.toString()}（${qnConvert(qn)}）`) : null;
-    }
-
-    /** 暂存的房间数据 */
-    let roomData = null;
-    const oldUrl_storage = class extends Storage {
-        constructor(storage_name = storageName) {
-            super(storage_name);
-        }
-        write(roomid, roomData) {
-            return this.set_roomData(storageName, roomid, JSON.stringify(roomData));
-        }
-        read(roomid) {
-            const roomData_sign = this.storage?.roomData?.filter(x => x?.roomid === roomid)[0]?.sign;
-            if (!roomData_sign) return { "ok": false, "message": `没有暂存此房间（${roomid}）的标识符` }
-            return this.get_roomData(roomData_sign);
-        }
-    }
-
-    try {
-        const storage = new oldUrl_storage();
-        let temp = storage.read(roomid);
-
-        if (!temp.ok) {
-            roomData = storage.write(roomid, {
-                storageName,
-                roomid,
-                "data": {
-                    "waitTime_HLS": 0,
-                    "oldUrl": {
-                        "flv": [],
-                        "hls": []
-                    }
-                }
-            })?.data;
-        } else {
-            roomData = temp?.data;
-        }
-    } catch (error) {
-        return {
-            "ok": false,
-            "message": `[旧直播流地址复用]在操作暂存的房间数据时出现了错误：${error.toString()}`,
-            "oldUrl": null
-        }
-    }
-
-
-    /**
-     * @description 暂存房间数据 - 地址过期时间检测
-     * @param {object} roomData 房间数据
-     */
-    const oldUrl_expiresTest = (roomData) => {
-        /**
-         * 过期检测
-         * 1. 检查过期的地址，并分拣出来
-         * 2. 将过期的地址从数组当中剔除
-         * 3. 调用暂存数据的“set_roomData”功能将经过过期检测的地址进行写入
-         */
-
-        let temp = JSON.parse(JSON.stringify(roomData));
-        temp.data.oldUrl.flv = roomData?.data?.oldUrl?.flv.filter(x => Number(x.expires) < (Date.now() / 1000) + 10);
-        temp.data.oldUrl.hls = roomData?.data?.oldUrl?.hls.filter(x => Number(x.expires) < (Date.now() / 1000) + 10);
-
-        try {
-            new oldUrl_storage(storageName).write(roomid, temp);
-        } catch (error) {
-            return {
-                "ok": false,
-                "message": `[旧直播流地址复用]在写入暂存的房间数据时出现了错误：${error.toString()}`
-            }
-        }
-
-        return {
-            "ok": true,
-            "message": ""
-        }
-    }
-
-    /**
-     * @description 暂存房间数据 - 存入新的真原画直播流地址
-     * @param {object} roomData 房间数据
-     * @param {object} streamUrl 请求的直播流地址
-     * @param {string} streamUrl.flv FLV 流地址
-     * @param {string} streamUrl.hls HLS_FMP4 流地址
-     */
-    const oldUrl_set = (roomData, streamUrl) => {
-        /**
-         * 写入真原画直播流地址
-         * 1. 初始化三个参数：expires（直播流过期时间）、url（直播流地址）、repeatNum（直播流使用次数）
-         * 2. 从请求的直播流地址当中提取 expires
-         * 3. 组合进一个对象当中，调用暂存数据的“set_roomData”功能将新真原画地址进行写入
-         */
-        // flv
-        roomData?.data?.oldUrl?.flv.push({
-            "expires": Number(new URL(streamUrl?.flv).searchParams.get('expires')),
-            "url": streamUrl?.flv,
-            "repeatNum": 0
-        });
-
-        // hls
-        roomData?.data?.oldUrl?.hls.push({
-            "expires": Number(new URL(streamUrl?.hls).searchParams.get('expires')),
-            "url": streamUrl?.hls,
-            "repeatNum": 0
-        });
-
-        try {
-            return new oldUrl_storage(storageName).write(roomid, roomData);
-        } catch (error) {
-            return {
-                "ok": false,
-                "message": `[旧直播流地址复用]在写入暂存的房间数据时出现了错误：${error.toString()}`
-            }
-        }
-    }
-
-    // 地址过期时间检测
-    oldUrl_expiresTest(roomData);
-
-    // 发现有新真原画直播流地址，执行写入
-    if ((!status_streamUrl.blurayUrl) && (!status_streamUrl.not_10000)) {
-        oldUrl_set(roomData, streamUrl);
-    }
-
-    return {
-        "ok": true,
-        "message": "0",
-        roomData
-    }
-}
 
 /**
  * @description 旧直播流地址获取
@@ -295,32 +107,76 @@ const oldUrl = (roomid, qn, streamUrl) => {
  * @returns {object}
  */
 const OldUrl = class {
+
     /**
      * @param {boolean} ok 状态
      */
-    ok = true;
+    ok = true
+
     /**
      * @param {string} message 消息
      */
-    message = "0";
+    message = "0"
+
     /**
-     * @param {object | null} oldStream 房间相对应的旧直播流地址
+     * @param {object} oldStream 房间相对应的旧直播流地址
+     * @param {string} oldStream.flv 旧的 FLV 流地址
+     * @param {string} oldStream.hls 旧的 HLS_FMP4 流地址
      */
-    oldStream = null;
+    oldStream = {
+        "flv": "",
+        "hls": ""
+    }
+
     /**
      * @param {object} streamStatus 获取到的直播流地址状态
      * @param {boolean} streamStatus.blurayUrl 是否为二压原画[地址带有“_bluray”字样]
      * @param {boolean} streamStatus.not_10000 是否为未登录“原画”画质[qn为10000但获取的是150等] 
     */
-    #streamStatus = {
+    streamStatus = {
         /**
          * 是否为二压原画[地址带有“_bluray”字样]
          */
-        blurayUrl: false,
+        "blurayUrl": false,
         /**
          * 是否为未登录“原画”画质[qn为10000但获取的是150等]
          */
-        not_10000: false
+        "not_10000": false
+    }
+
+    /**
+     * @class
+     * @description 旧直播流复用-对暂存房间数据的集成方法
+     */
+    #oldUrl_storage = class extends Storage {
+
+        /**
+         * @param {string} storage_name 暂存数据标识名
+         */
+        constructor(storage_name = storageName) {
+            super(storage_name);
+        }
+
+        /**
+         * @description 写入暂存房间数据
+         * @param {number} roomid 房间 ID 值
+         * @param {object} roomData 需要保存的房间数据
+         * @returns {object} 写入后相对应的暂存房间数据
+         */
+        write(roomid, roomData) {
+            return this.set_roomData(storageName, roomid, JSON.stringify(roomData));
+        }
+
+        /**
+         * @description 读取暂存房间数据
+         * @param {number} roomid 房间 ID 值
+         * @returns {object} 相对应的暂存房间数据
+         */
+        read(roomid) {
+            const roomData_sign = this.storage?.roomData?.filter(x => x?.roomid === roomid)[0]?.sign;
+            if (!roomData_sign) return { "ok": false, "message": `没有暂存此房间（${roomid}）的标识符` }
+            return this.get_roomData(roomData_sign);
+        }
     }
 
     /**
@@ -330,43 +186,92 @@ const OldUrl = class {
      * @param {object} streamUrl 请求的直播流地址
      * @param {string} streamUrl.flv FLV 流地址
      * @param {string} streamUrl.hls HLS_FMP4 流地址
+     * @param {string} storage_name 暂存数据标识名[可选，但必须在全局下设置]
      */
-    constructor(roomid, qn, streamUrl) {
+    constructor(roomid, qn, streamUrl, storage_name = storageName) {
         // 对是否开启“旧直播流地址复用”功能进行检测
         if (!switch_oldUrl) {
-            this.message = "[旧直播流地址复用]您并未开启“旧直播流地址复用”功能";
+            switch_DEBUG ? console.log("[旧直播流地址复用]您并未开启“旧直播流地址复用”功能") : null;
             this.ok = false;
-            return
+            this.message = "[旧直播流地址复用]您并未开启“旧直播流地址复用”功能";
+            return;
         }
 
         // 对获取到的直播流地址进行状态检查
-        this.streamUrl_statusCheck(streamUrl, qn);
+        this.#getStreamStatus(streamUrl, qn);
 
         // 对检查后出现的状态异常直接输出而不做接下来的操作
         if (!this.ok) return;
 
-        
+        // 获取暂存的房间数据
+        let roomData = null;
+        try {
+            const storage = new this.#oldUrl_storage(storageName);
+            let temp = storage.read(roomid);
+
+            if (!temp.ok) {
+                roomData = storage.write(roomid, {
+                    storageName,
+                    roomid,
+                    "data": {
+                        "waitTime_HLS": 0,
+                        "oldUrl": {
+                            "flv": [],
+                            "hls": []
+                        }
+                    }
+                })?.data;
+            } else {
+                roomData = temp?.data;
+            }
+        } catch (error) {
+            this.ok = false;
+            this.message = `[旧直播流地址复用]在操作暂存的房间数据时出现了错误：${error.toString()}`;
+            return;
+        }
+
+        // 地址过期时间筛除
+        try {
+            let temp = this.#expires(roomid, roomData);
+
+            if (!temp?.ok) {
+                this.ok = false;
+                this.message = temp?.message;
+                return;
+            }
+        } catch (error) {
+            this.ok = false;
+            this.message = `[旧直播流地址复用]在执行地址过期时间筛除时出现了错误：${error.toString()}`;
+            return;
+        }
+
+        // 发现有获取到真原画直播流地址，执行写入
+        if ((!this.streamStatus.blurayUrl) && (!this.streamStatus.not_10000)) {
+            try {
+                let temp = this.#set(roomid, roomData, streamUrl);
+
+                if (!temp?.ok) {
+                    this.ok = false;
+                    this.message = temp?.message;
+                    return;
+                }
+            } catch (error) {
+
+            }
+        }
     }
 
     /**
-     * @description 检测获取到的直播流地址状态
+     * @function
+     * @description 获取直播流地址的状态
      * @param {object} streamUrl 获取的直播流地址
      * @param {string} streamUrl.flv FLV 流地址
      * @param {string} streamUrl.hls HLS_FMP4 流地址
      * @param {number} qn 画质 qn 值
      * @returns {object} 输出处理后的对象 
      */
-    streamUrl_statusCheck(streamUrl, qn){
-        // 对直播流地址为 hevc 地址
-        if (/_minihevc/.test(streamUrl?.flv) || /_minihevc/.test(streamUrl?.hls)) {
-            switch_DEBUG ? console.warn("[旧直播流地址复用]当前获取到的为 HEVC 地址，故不对此次请求的直播流地址进行复用操作和保存") : null;
-            this.message = "[旧直播流地址复用]当前获取到的为 HEVC 地址，故不对此次请求的直播流地址进行复用操作和保存";
-            this.ok = false;
-            return;
-        }
-
-        // 正常获取到暂存数据中的房间数据后，就可以对获取的直播流地址进行鉴别了
-        // 对 qn 值为非原画（10000）
+    #getStreamStatus(streamUrl, qn) {
+        // 用户 qn 值为非原画（10000）
         if (qn !== 10000) {
             switch_DEBUG ? console.warn("[旧直播流地址复用]当前房间请求的画质为非原画（qn 不等于 10000），故不对此次请求的直播流地址进行复用操作和保存") : null;
             this.message = "[旧直播流地址复用]当前房间请求的画质为非原画（qn 不等于 10000），故不对此次请求的直播流地址进行复用操作和保存";
@@ -374,7 +279,7 @@ const OldUrl = class {
             return;
         }
 
-        // 对直播流地址为 hevc 地址
+        // 直播流地址为 hevc 地址
         if (/_minihevc/.test(streamUrl?.flv) || /_minihevc/.test(streamUrl?.hls)) {
             switch_DEBUG ? console.warn("[旧直播流地址复用]当前获取到的为 HEVC 地址，故不对此次请求的直播流地址进行复用操作和保存") : null;
             this.message = "[旧直播流地址复用]当前获取到的为 HEVC 地址，故不对此次请求的直播流地址进行复用操作和保存";
@@ -382,19 +287,83 @@ const OldUrl = class {
             return;
         }
 
-        // 对直播流地址带“_bluray”的二压画质
+        // 直播流地址为二压原画地址
         if (/_bluray/.test(streamUrl?.flv) || /_bluray/.test(streamUrl?.hls)) {
-            this.#streamStatus.blurayUrl = true;
+            this.streamStatus.blurayUrl = true;
             switch_DEBUG ? console.warn("[旧直播流地址复用]当前获取到的直播流地址为二压原画[地址带有“_bluray”字样]") : null;
         }
 
         // 对未登录“原画”画质
         if (/_(800|1500|2500|4000)/.test(streamUrl?.flv) || /_(800|1500|2500|4000)/.test(streamUrl.hls)) {
-            this.#streamStatus.not_10000 = true;
+            this.streamStatus.not_10000 = true;
             switch_DEBUG ? console.warn(`[旧直播流地址复用]当前获取到的直播流地址画质不是请求中的 ${qn.toString()}（${qnConvert(qn)}）`) : null;
         }
     }
 
+    /**
+     * @description 过期检测
+     * @param {number} roomid 房间 ID 值
+     * @param {object} roomData 暂存的房间数据
+     * @returns {object} ok:状态, message:信息, roomData:暂存的房间数据
+     */
+    #expires(roomid, roomData) {
+        let temp = JSON.parse(JSON.stringify(roomData));
+        temp.data.oldUrl.flv = roomData?.data?.oldUrl?.flv.filter(x => Number(x.expires) < (Date.now() / 1000) + 10);
+        temp.data.oldUrl.hls = roomData?.data?.oldUrl?.hls.filter(x => Number(x.expires) < (Date.now() / 1000) + 10);
+
+        try {
+            temp = new this.#oldUrl_storage(storageName).write(roomid, temp);
+        } catch (error) {
+            return {
+                "ok": false,
+                "message": `[旧直播流地址复用]在写入暂存的房间数据时出现了错误：${error.toString()}`,
+                "roomData": null
+            }
+        }
+
+        return {
+            "ok": true,
+            "message": "0",
+            "roomData": temp
+        }
+    }
+
+    /**
+     * @description 保存直播流地址
+     * @param {number} roomid 
+     * @param {object} roomData 
+     * @param {object} streamUrl 
+     * @returns {object} ok:状态, message:信息, roomData:暂存的房间数据
+     */
+    #set(roomid, roomData, streamUrl) {
+        let temp = JSON.parse(JSON.stringify(roomData));
+
+        // flv
+        temp?.data?.oldUrl?.flv.push({
+            "expires": Number(new URL(streamUrl?.flv).searchParams.get('expires')),
+            "url": streamUrl?.flv,
+            "repeatNum": 0
+        });
+
+        // hls
+        temp?.data?.oldUrl?.hls.push({
+            "expires": Number(new URL(streamUrl?.hls).searchParams.get('expires')),
+            "url": streamUrl?.hls,
+            "repeatNum": 0
+        });
+
+        try {
+            temp = new this.#oldUrl_storage(storageName).write(roomid, temp);
+        } catch (error) {
+            return {
+                "ok": false,
+                "message": `[旧直播流地址复用]在写入暂存的房间数据时出现了错误：${error.toString()}`,
+                "roomData": null
+            }
+        }
+
+        return temp
+    }
 }
 
 /**
@@ -448,6 +417,7 @@ const qnConvert = qn => {
 const Storage = class {
     ok = true;
     storage = null;
+    message = "0";
 
     /**
      * @description 暂存数据 - 默认执行方法
@@ -457,7 +427,8 @@ const Storage = class {
         if (typeof sharedStorage === "undefined") {
             if (switch_DEBUG) console.error("[暂存数据]执行脚本内部不存在 sharedStorage 接口，请升级录播姬核心版本到 2.6.0 及以上");
             this.ok = false;
-            throw ("执行脚本内部不存在 sharedStorage 接口，请升级录播姬核心版本到 2.6.0 及以上");
+            this.message = "执行脚本内部不存在 sharedStorage 接口，请升级录播姬核心版本到 2.6.0 及以上";
+            return;
         }
 
         // 通过用户设定的标识名读取“sharedStorage”接口中的内容
@@ -477,13 +448,17 @@ const Storage = class {
         try {
             // 先清空暂存在录播姬内部的暂存数据
             sharedStorage.clear();
-            console.log("[暂存数据]已执行暂存数据清空操作");
+            switch_DEBUG ? console.log("[暂存数据]已执行暂存数据清空操作") : null;
             // 再注入新数据
             const storage_json = JSON.stringify({ storageName, "roomData": [] });
             this.storage = JSON.parse(storage_json);
             sharedStorage.setItem(`name=${storageName}`, storage_json);
-            console.log("[暂存数据]注入新数据成功");
-        } catch (error) { throw (`[暂存数据]操作暂存数据时出现了错误：${error.toString()}`) }
+            switch_DEBUG ? console.log("[暂存数据]注入新数据成功") : null;
+        } catch (error) {
+            this.ok = false;
+            this.message = `[暂存数据]操作暂存数据时出现了错误：${error.toString()}`;
+            return;
+        }
     }
 
     /**
@@ -648,3 +623,4 @@ const queryStringToObject = (queryString) =>
 recorderEvents.onTest(null);
 // sharedStorage.clear();
 module.exports.recEvents = recorderEvents;
+module.exports.Storage = Storage;
