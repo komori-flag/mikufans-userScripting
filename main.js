@@ -50,31 +50,9 @@ var recorderEvents = {
 
 // 录播姬脚本正文开头 ------
 recorderEvents.onTest = () => {
-    // 模拟正常请求中需要保存暂存数据的情况
-    // const item = new Storage(storageName);
-    // item.set_roomData(3, JSON.stringify({
-    //     "storageName": storageName,
-    //     "roomid": 3,
-    //     "data": {
-    //         "waitTime_HLS": 333,
-    //         "oldUrl": {
-    //             "flv": [
-    //                 { "expires": 332, "url": "http://127.0.0.1/flv1", "repeatNum": 0 },
-    //                 { "expires": 99, "url": "http://127.0.0.1/flv1", "repeatNum": 0 },
-    //             ],
-    //             "hls": []
-    //         }
-    //     }
-    // }), storageName);
-    // new Log("info",JSON.stringify(oldUrl(3, 10000, {
-    //     "flv": "http://127.0.0.1/_1500",
-    //     "hls": "http://127.0.0.1"
-    // })))
-    // new Log("info",JSON.stringify(new Storage(storageName).get_roomData(`name=${storageName}&roomid=3`)));
-
-    const getOldUrl = new OldUrl(8664667, 10000, {
-        "flv": 'http://127.0.0.1/flv1',
-        "hls": 'http://127.0.0.1/hls1'
+    const getOldUrl = new OldUrl(3, 10000, {
+        "flv": 'https://cn-gddg-cu-01-04.bilivideo.com/live-bvc/481448/live_11153765_9369560.flv',
+        "hls": 'https://cn-gddg-cu-01-04.bilivideo.com/live-bvc/481448/live_11153765_9369560/index.m3u8'
     });
 
     console.log(getOldUrl);
@@ -129,10 +107,8 @@ const OldUrl = class {
     }
 
     /**
-     * @param {object} 获取到的直播流地址状态
-     * @param {boolean} streamStatus.blurayUrl 是否为二压原画[地址带有“_bluray”字样]
-     * @param {boolean} streamStatus.not_10000 是否为未登录“原画”画质[qn为10000但获取的是150等] 
-    */
+     * @enum {boolean} 获取到的直播流地址状态
+     */
     #streamStatus = {
         /**
          * 是否为二压原画[地址带有“_bluray”字样]
@@ -145,39 +121,45 @@ const OldUrl = class {
     }
 
     /**
-     * @class
      * @description 旧直播流复用-对暂存房间数据的集成方法
-     */
-    #oldUrl_storage = class extends Storage {
+     * @param {string} storage_name 暂存数据标识名
+     * @example storage = this.#storage(storage_name)
+    */
+    #storage = (storage_name) =>
+        new class extends Storage {
 
-        /**
-         * @param {string} storage_name 暂存数据标识名
-         */
-        constructor(storage_name) {
-            super(storage_name);
-        }
+            /**
+             * @param {string} storage_name 暂存数据标识名
+             */
+            constructor(storage_name) {
+                super(storage_name);
+                if (!this.ok) return;
 
-        /**
-         * @description 写入暂存房间数据
-         * @param {number} roomid 房间 ID 值
-         * @param {object} roomData 需要保存的房间数据
-         * @returns {object} 写入后相对应的暂存房间数据
-         */
-        write(roomid, roomData) {
-            return this.set_roomData(storageName, roomid, JSON.stringify(roomData));
-        }
+                this.read = this.#read;
+                this.write = this.#write;
+            }
 
-        /**
-         * @description 读取暂存房间数据
-         * @param {number} roomid 房间 ID 值
-         * @returns {object} 相对应的暂存房间数据
-         */
-        read(roomid) {
-            const roomData_sign = this.storage?.roomData?.filter(x => x?.roomid === roomid)[0]?.sign;
-            if (!roomData_sign) return { "ok": false, "message": `没有暂存此房间（${roomid}）的标识符` }
-            return this.get_roomData(roomData_sign);
-        }
-    }
+            /**
+             * @description 写入暂存房间数据
+             * @param {number} roomid 房间 ID 值
+             * @param {object} roomData 需要保存的房间数据
+             * @returns {object} 写入后相对应的暂存房间数据
+             */
+            #write(roomid, roomData) {
+                return this.set_roomData(storageName, roomid, JSON.stringify(roomData));
+            }
+
+            /**
+             * @description 读取暂存房间数据
+             * @param {number} roomid 房间 ID 值
+             * @returns {object} 相对应的暂存房间数据
+             */
+            #read(roomid) {
+                const roomData_sign = this.storage?.roomData?.filter(x => x?.roomid === roomid)[0]?.sign;
+                if (!roomData_sign) return { "ok": false, "message": `没有暂存此房间（${roomid}）的标识符` }
+                return this.get_roomData(roomData_sign);
+            }
+        }(storage_name)
 
     /**
      * @description 旧直播流地址复用
@@ -186,7 +168,7 @@ const OldUrl = class {
      * @param {object} streamUrl 请求的直播流地址
      * @param {string} streamUrl.flv FLV 流地址
      * @param {string} streamUrl.hls HLS_FMP4 流地址
-     * @param {string} storage_name 暂存数据标识名[可选，但必须在全局下设置]
+     * @param {string} storage_name 暂存数据标识名[可选，但必须在全局下设置`storageName`变量]
      */
     constructor(roomid, qn, streamUrl, storage_name = storageName) {
         // 对是否开启“旧直播流地址复用”功能进行检测
@@ -215,6 +197,19 @@ const OldUrl = class {
             return;
         }
 
+        // 筛选出需要输出到外部的旧直播流地址
+        try {
+            let temp = this.#select(roomid, storage_name, streamUrl);
+
+            if (!temp?.ok) {
+                [this.ok, this.message] = [false, temp?.message];
+                return;
+            }
+        } catch (error) {
+            [this.ok, this.message] = [false, `[旧直播流地址复用]在执行筛选地址时出现了错误：${error.toString()}`];
+            return;
+        }
+
         // 发现有获取到真原画直播流地址，执行写入
         if ((!this.#streamStatus.blurayUrl) && (!this.#streamStatus.not_10000)) {
             try {
@@ -229,20 +224,6 @@ const OldUrl = class {
                 return;
             }
         }
-
-        // 筛选出需要输出到外部的旧直播流地址
-        try {
-            let temp = this.#select(roomid, storage_name, streamUrl);
-
-            if (!temp?.ok) {
-                [this.ok, this.message] = [false, temp?.message];
-                return;
-            }
-
-            [this.oldStream.flv, this.oldStream.hls] = [temp.flv, temp.hls];
-        } catch (error) {
-            [this.ok, this.message] = [false, `[旧直播流地址复用]在执行筛选地址时出现了错误：${error.toString()}`];
-        }
     }
 
     /**
@@ -252,10 +233,26 @@ const OldUrl = class {
      * @returns {object}
      */
     #getRoomData(roomid, storage_name) {
-        const storage = new this.#oldUrl_storage(storage_name);
+        let storage = null;
+        try {
+            storage = this.#storage(storage_name)
+
+            if (!storage?.ok) {
+                return {
+                    "ok": storage.ok,
+                    "message": storage.message
+                }
+            }
+        } catch (error) {
+            return {
+                "ok": false,
+                "message": `[旧直播流地址复用]调用自身获取房间数据方法时出现了错误：${error.toString()}`
+            }
+        }
+
         let temp = storage.read(roomid);
 
-        if (!temp.ok) {
+        if (!temp?.ok) {
             return storage.write(roomid, {
                 storageName,
                 roomid,
@@ -266,9 +263,9 @@ const OldUrl = class {
                         "hls": []
                     }
                 }
-            })?.data;
+            });
         } else {
-            return temp?.data;
+            return temp;
         }
     }
 
@@ -316,11 +313,25 @@ const OldUrl = class {
      */
     #expires(roomid, storage_name) {
         let temp = this.#getRoomData(roomid, storage_name);
+
+        if (!temp?.ok) {
+            return {
+                "ok": temp?.ok,
+                "message": temp?.message
+            }
+        } else {
+            temp = temp?.data;
+        }
+
+
+        // const funpack = (oldUrl, ...urlSignArr) =>
+        //     urlSignArr.map(urlSign => oldUrl[urlSign] = oldUrl[urlSign].filter(x => Number(x.expires) < (Date.now() / 1000) + 10));
+
         temp.data.oldUrl.flv = temp?.data?.oldUrl?.flv.filter(x => Number(x.expires) < (Date.now() / 1000) + 10);
         temp.data.oldUrl.hls = temp?.data?.oldUrl?.hls.filter(x => Number(x.expires) < (Date.now() / 1000) + 10);
 
         try {
-            temp = new this.#oldUrl_storage(storage_name).write(roomid, temp);
+            temp = this.#storage(storage_name).write(roomid, temp);
         } catch (error) {
             return {
                 "ok": false,
@@ -337,7 +348,7 @@ const OldUrl = class {
     }
 
     /**
-     * @description 保存直播流地址
+     * @description 写入直播流地址
      * @param {number} roomid 房间 ID 值
      * @param {string} storage_name 暂存数据标识名
      * @param {object} streamUrl 获取的直播流地址 
@@ -345,6 +356,32 @@ const OldUrl = class {
      */
     #set(roomid, storage_name, streamUrl) {
         let temp = this.#getRoomData(roomid, storage_name);
+
+        if (!temp?.ok) {
+            return {
+                "ok": temp?.ok,
+                "message": temp?.message
+            }
+        } else {
+            temp = temp?.data;
+        }
+
+        new Log("info", `[旧直播流地址复用]写入直播流地址，获取到的地址为：[flv: ${streamUrl.flv}, hls_fmp4: ${streamUrl.hls}]/r/n获取到的房间数据为：[${JSON.stringify(temp)}]`)
+
+        const valueRepeatCheck = (oldUrl, url, ...urlSignArr) =>
+            urlSignArr.filter(urlSign =>
+                oldUrl[urlSign].filter(x => x.url === url[urlSign])[0]
+            )
+
+        // 检查是否有重复的直播流地址传入
+        if (valueRepeatCheck(temp?.data?.oldUrl, streamUrl, "flv", "hls").length) {
+            new Log("warn", `[旧直播流地址复用]当前获取到的地址与已保存的地址重复，不予保存`)
+            return {
+                "ok": true,
+                "message": `[旧直播流地址复用]当前获取到的地址与已保存的地址重复，不予保存`,
+                "roomData": null
+            }
+        }
 
         // flv
         temp?.data?.oldUrl?.flv.push({
@@ -361,7 +398,16 @@ const OldUrl = class {
         });
 
         try {
-            temp = new this.#oldUrl_storage(storage_name).write(roomid, temp);
+            let storage = this.#storage(storage_name);
+
+            if (!storage?.ok) {
+                return {
+                    "ok": storage.ok,
+                    "message": storage.message
+                }
+            }
+
+            temp = this.#storage(storage_name).write(roomid, temp);
         } catch (error) {
             return {
                 "ok": false,
@@ -385,32 +431,23 @@ const OldUrl = class {
      */
     #select(roomid, storage_name, streamUrl) {
         let temp = this.#getRoomData(roomid, storage_name);
+
+        if (!temp?.ok) {
+            return {
+                "ok": temp?.ok,
+                "message": temp?.message
+            }
+        } else {
+            temp = temp?.data;
+        }
+
         const maxNum = 5; // test
         const funPack = (oldUrl, url, ...urlSignArr) =>
             urlSignArr.map(urlSign =>
                 oldUrl[urlSign].filter(x => url[urlSign] !== x.url && x.repeatNum < maxNum)
                     .sort((a, b) => a?.repeatNum - b?.repeatNum)
                     .map((x, i, arr) => arr[Math.floor(Math.random() * arr.length)])
-                    .filter((x,i,arr) => {
-                        console.log(x);
-                        console.log(arr);
-                        if(i == 0) {
-                            console.log(arr)
-                            x.repeatNum++;
-                            return true
-                        }
-                    }));
-
-        /**
-         * 当没有暂存此房间的直播流
-         *      或暂存的直播流地址仅有一且以与获取到的直播流地址一致
-         * 则不输出旧的直播流地址
-         * 
-         * 旧直播流地址选择的核心在于复用的次数
-         * 直播流的复用次数越多，优先级越低
-         * 单个直播流的复用最大次数遵循用户设定
-         * 当达到复用次数的最大值时，不再复用此直播流地址
-         */
+                    .filter((x, i, arr) => i === 0 ? ++x.repeatNum : false)[0]?.url ?? '');
 
         const [flv, hls] = funPack({
             "flv": temp?.data?.oldUrl?.flv,
@@ -418,7 +455,7 @@ const OldUrl = class {
         }, streamUrl, "flv", "hls");
 
         try {
-            temp = new this.#oldUrl_storage(storage_name).write(roomid, temp);
+            temp = this.#storage(storage_name).write(roomid, temp);
         } catch (error) {
             return {
                 "ok": false,
@@ -426,7 +463,8 @@ const OldUrl = class {
             }
         }
 
-        this.oldStream = { flv, hls };
+        this.oldStream = { flv, hls }
+
         return {
             "ok": true,
             "message": "0",
@@ -449,9 +487,7 @@ const addressSelect_stream = (roomid, streamUrl, oldUrl = null) => {
      * 1. 输入获取到的直播流地址与旧直播流地址
      * 2. 检测是否返回已存在的旧直播流地址，没有 --> 两流选择
      * 3. 已存在的旧直播流地址，读取两流的数组
-     * 4. 筛选两流数组，将超出复用次数的直播流筛去
-     * 5. 随机优先从数组中选择复用次数少的直播流地址 --> 两流选择
-     * 6. 两流选择的关键在于 HLS 流等待时间，通过
+     * 4. 两流选择的关键在于 HLS 流等待时间，通过
      */
     return ""
 }
